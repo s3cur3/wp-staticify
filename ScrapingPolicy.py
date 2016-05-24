@@ -26,8 +26,9 @@ class ScrapingPolicy:
     def canonicalize(self, url):
         """
         :type url: str
+        :return: Canonical version of the URL in question, such that two pages with different paths don't get scraped twice.
+                 Note that the canonical version should be an absolute URL (e.g., http://mysite.com/home/).
         :rtype: str
-        :return: canonical version of the URL in question, such that two pages with different paths don't get scraped twice
         """
         return url
 
