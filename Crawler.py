@@ -15,6 +15,7 @@ class Crawler:
         self.policy = policy
         self.requests_in_flight = 0
         self.crawled = set()
+        self.redirects = {}  # maps URLs to their destination
         self.errors = {}  # maps URLs to their (error) HTTP status codes
         AsyncHTTPClient.configure(None, defaults=dict(user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'))
         self.http_client = AsyncHTTPClient()
@@ -28,7 +29,20 @@ class Crawler:
 
         # Only after IOLoop.instance().stop() has been called...
         with open(os.path.join(self.policy.getOutDirectory(), 'errors.log'), 'w') as error_file:
-            error_file.writelines(f"HTTP Status {status_code}: {url}" for url, status_code in self.errors.items())
+            error_file.writelines(f"HTTP Status {status_code}: {url}\n" for url, status_code in self.errors.items())
+
+        with open(os.path.join(self.policy.getOutDirectory(), 'redirects.conf'), 'w') as redirects_file:
+            for original, destination in self.redirects.items():
+                parsed = urlparse(original)
+                if parsed.query:
+                    # TODO: This really needs a test on a live Nginx server!
+                    redirects_file.write(
+                        f"if ($args ~* \"{parsed.query}\") {{"
+                        f"    rewrite ^{destination}? last;"
+                        "}\n")
+                else:
+                    redirects_file.write(f"rewrite ^{parsed.path}$ {destination} permanent;\n")
+
 
     def handle_response(self, url, response):
         def find_links(html, policy):
@@ -90,31 +104,33 @@ class Crawler:
                 self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
 
 
-    def scrape(self, initial_url, redirected_url, content):
+    def scrape(self, initial_url, final_url, content):
         """
         :param initial_url: The URL you requested
         :type initial_url: str
-        :param redirected_url: The URL you wound up at (may be the same!)
-        :type redirected_url: str
+        :param final_url: The URL you wound up at after any redirects (may be the same!)
+        :type final_url: str
         :param content: The full content of the URL; may be HTML for us to parse, or just binary data; in either case it gets written to disk
         :type content: str|bytes
         """
         assert content
-        # TODO: Serve a 30x redirect instead from initial to redirected
-        for url in {initial_url, redirected_url}:
-            if self.policy.shouldScrapeUrl(url):
-                path = self.get_local_path_from_url(url)
-                try:  # Create the parent directory
-                    os.makedirs(os.path.abspath(os.path.join(path, os.pardir)))
-                except OSError as exception:
-                    if exception.errno != errno.EEXIST:
-                        raise exception
-                if isinstance(content, str):
-                    with open(path, 'w') as f:
-                        f.write(self.policy.extractContent(content))
-                else:
-                    with open(path, 'wb') as f:
-                        f.write(content)
+
+        if initial_url != final_url:
+            self.redirects[initial_url] = final_url
+
+        if self.policy.shouldScrapeUrl(final_url):
+            path = self.get_local_path_from_url(final_url)
+            try:  # Create the parent directory
+                os.makedirs(os.path.abspath(os.path.join(path, os.pardir)))
+            except OSError as exception:
+                if exception.errno != errno.EEXIST:
+                    raise exception
+            if isinstance(content, str):
+                with open(path, 'w') as f:
+                    f.write(self.policy.extractContent(content))
+            else:
+                with open(path, 'wb') as f:
+                    f.write(content)
 
     def get_local_path_from_url(self, canonical_url):
         """
