@@ -1,12 +1,15 @@
+from urllib.parse import urlparse
 
 class ScrapingPolicy:
-    def __init__(self, rootUrl):
+    def __init__(self, start_at_url):
         """
-        :param rootUrl: The URL we should begin scraping with (typically your home page)
-        :type rootUrl: str
+        :param start_at_url: The URL we should begin scraping with (typically your home page or a sitemap page)
+        :type start_at_url: str
         """
-        self.rootUrl = rootUrl
-        assert self.rootUrl.startswith(('http://', 'https://'))
+        self.start_at_url = start_at_url
+        uri = urlparse(start_at_url)
+        self.domain = f"{uri.scheme}://{uri.netloc}"
+        assert self.domain.startswith(('http://', 'https://'))
 
     def shouldCrawlUrl(self, url):
         """
@@ -14,7 +17,7 @@ class ScrapingPolicy:
         :rtype: bool
         :return: true iff this URL should be crawled
         """
-        return self.rootUrl in url or url.startswith('/')
+        return self.domain in url or url.startswith('/')
 
     def shouldScrapeUrl(self, url):
         """
@@ -22,7 +25,7 @@ class ScrapingPolicy:
         :rtype: bool
         :return: true iff this page should be scraped
         """
-        return self.rootUrl in url
+        return self.domain in url
 
     def canonicalize(self, url):
         """
@@ -39,7 +42,7 @@ class ScrapingPolicy:
         >>> policy.canonicalize('http://foo.bar/baz/index.html')
         'http://foo.bar/baz/'
         """
-        abs_url = self.rootUrl + url if url.startswith('/') else url
+        abs_url = self.domain + url if url.startswith('/') else url
         components = abs_url.split('/')
         if components[-1]:  # if the path doesn't end in a /
             if components[-1] == 'index.html':

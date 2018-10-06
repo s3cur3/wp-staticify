@@ -1,9 +1,10 @@
 import errno
-
 import os
-import urllib.request
 from bs4 import BeautifulSoup
+from functools import partial
 from ScrapingPolicy import ScrapingPolicy  # for the sake of PyCharm's auto-documentation
+from tornado import ioloop
+from tornado.httpclient import AsyncHTTPClient, HTTPError
 from urllib.parse import urlparse
 
 class Crawler:
@@ -12,83 +13,108 @@ class Crawler:
         :type policy: ScrapingPolicy
         """
         self.policy = policy
+        self.requests_in_flight = 0
+        self.crawled = set()
+        self.errors = {}  # maps URLs to their (error) HTTP status codes
+        AsyncHTTPClient.configure(None, defaults=dict(user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'))
+        self.http_client = AsyncHTTPClient()
 
     def crawl(self):
         """
         Crawls the site and writes the scraped HTML (and images, etc.) to disk
         """
-        def collectLinksToScrape(html, policy):
+        self.enqueue_urls([self.policy.start_at_url])
+        ioloop.IOLoop.instance().start()
+
+        # Only after IOLoop.instance().stop() has been called...
+        with open(os.path.join(self.policy.getOutDirectory(), 'errors.log'), 'w') as error_file:
+            error_file.writelines(f"HTTP Status {status_code}: {url}" for url, status_code in self.errors.items())
+
+    def handle_response(self, url, response):
+        def find_links(html, policy):
             """
             :type html: str
             :type policy: ScrapingPolicy
-            :rtype: set[str]
+            :rtype: Iterator[str]
             """
-            soup = BeautifulSoup(html, "lxml")
-            out = set()
-            for link in soup.find_all("a"):
-                if "href" in link.attrs and policy.shouldCrawlUrl(link.attrs["href"]):
-                    href = policy.canonicalize(link.attrs["href"])
-                    assert(href.startswith("http://"))
-                    out.add(href)
-            return out
+            soup = BeautifulSoup(html, 'lxml')
+            for link in soup.find_all('a'):
+                if 'href' in link.attrs and policy.shouldCrawlUrl(link.attrs['href']):
+                    href = policy.canonicalize(link.attrs['href'])
+                    assert href.startswith(('http://', 'https://')), 'Not an absolute URL'
+                    yield href
+            # TODO: Add in <link>, <script>, img src, etc. tags
 
-        rootText = self.readText(self.policy.rootUrl)
-        self.scrape(self.policy.rootUrl, rootText)
+        if response.error:
+            self.errors[url] = response.error.code
+        else:
+            if self.response_is_text(response):
+                content = response.body.decode('utf-8')
+                linked_urls = find_links(content, self.policy)
+                self.enqueue_urls(linked_urls)
+            else:  # treat as binary
+                content = response.body
+            self.scrape(url, response.effective_url, content)
 
-        toCrawl = collectLinksToScrape(rootText, self.policy)
-        crawled = set()
-        while toCrawl:
-            url = toCrawl.pop()
-            if url not in crawled:
-                crawled.add(url)
-                pageText = self.readText(url)
-                self.scrape(url, pageText)
-                for subUrl in collectLinksToScrape(pageText, self.policy):
-                    if subUrl not in crawled:
-                        toCrawl.add(subUrl)
+        self.requests_in_flight -= 1
+        if self.requests_in_flight == 0:
+            ioloop.IOLoop.instance().stop()
 
-    def scrape(self, url, html):
+    @staticmethod
+    def response_is_text(response):
         """
-        :param url: A canonical, absolute URL
-        :type url: str
-        :param html: The full HTML of the page for us to parse and write to disk
-        :type html: str
+        :type response: httpclient.HTTPResponse
+        :rtype: bool
         """
-        if html and self.policy.shouldScrapeUrl(url):
-            path = self.getLocalPathFromUrl(url)
-            try:  # Create the parent directory
-                os.makedirs(os.path.abspath(os.path.join(path, os.pardir)))
-            except OSError as exception:
-                if exception.errno != errno.EEXIST:
-                    raise
-            with open(path, "w") as f:
-                f.write(self.policy.extractContent(html))
+        if 'content-type' in response.headers:
+            return not response.headers['content-type'] or response.headers['content-type'].startswith('text/')
+        return False
 
-    def getLocalPathFromUrl(self, canonicalUrl):
-        parsedUrl = urlparse(canonicalUrl)
-        assert (self.policy.rootUrl == '{uri.scheme}://{uri.netloc}/'.format(uri=parsedUrl))
-        urlPath = parsedUrl.path  # ignore the domain
-        if urlPath.endswith("/"):
-            urlPath += "index.html"
-        return self.policy.getOutDirectory() + os.sep + urlPath
+    def enqueue_urls(self, urls):
+        """
+        :type urls: Iterable[str]
+        """
+        for url in urls:
+            if url not in self.crawled:
+                self.crawled.add(url)
+                self.requests_in_flight += 1
+                self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
 
-    def readText(self, url):
+
+    def scrape(self, initial_url, redirected_url, content):
         """
-        If the URL represents a text page (e.g., HTML), returns the text we read from the page; else, returns the empty string
-        :rtype: str
+        :param initial_url: The URL you requested
+        :type initial_url: str
+        :param redirected_url: The URL you wound up at (may be the same!)
+        :type redirected_url: str
+        :param content: The full content of the URL; may be HTML for us to parse, or just binary data; in either case it gets written to disk
+        :type content: str|bytes
         """
-        req = urllib.request.Request(
-            url,
-            data=None,
-            headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'}
-        )
-        try:
-            with urllib.request.urlopen(req) as httpResponse:
-                if httpResponse and httpResponse.headers["content-type"].startswith("text/"):
-                    return httpResponse.read().decode('utf-8')
-                else:
-                    return ""
-        except urllib.error.HTTPError:
-            return ""
+        assert content
+        # TODO: Serve a 30x redirect instead from initial to redirected
+        for url in {initial_url, redirected_url}:
+            if self.policy.shouldScrapeUrl(url):
+                path = self.get_local_path_from_url(url)
+                try:  # Create the parent directory
+                    os.makedirs(os.path.abspath(os.path.join(path, os.pardir)))
+                except OSError as exception:
+                    if exception.errno != errno.EEXIST:
+                        raise exception
+                transformed = self.policy.extractContent(content) if isinstance(content, str) else content
+                with open(path, 'w') as f:
+                    f.write(transformed)
+
+    def get_local_path_from_url(self, canonical_url):
+        """
+        :type canonical_url: str
+        :return: str
+        """
+        url_path = urlparse(canonical_url).path  # ignore the domain
+        assert url_path.startswith('/')
+        if url_path.endswith('/'):
+            url_path += 'index.html'
+        elif '.' not in url_path.split('/')[0]:  # no extension in the final path component
+            url_path += '/index.html'
+        return os.path.join(self.policy.getOutDirectory(), url_path[1:])  # drop the leading slash
 
 
