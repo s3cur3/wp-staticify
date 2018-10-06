@@ -38,12 +38,21 @@ class Crawler:
             :rtype: Iterator[str]
             """
             soup = BeautifulSoup(html, 'lxml')
-            for link in soup.find_all('a'):
-                if 'href' in link.attrs and policy.shouldCrawlUrl(link.attrs['href']):
-                    href = policy.canonicalize(link.attrs['href'])
-                    assert href.startswith(('http://', 'https://')), 'Not an absolute URL'
-                    yield href
-            # TODO: Add in <link>, <script>, img src, etc. tags
+            for element in soup.find_all():
+                if 'srcset' in element.attrs:
+                    # add all sources
+                    for source in element.attrs['srcset'].split(','):
+                        src = source.rsplit(' ', 1)[:-1]
+                        url = policy.canonicalize(src)
+                        assert url.startswith(('http://', 'https://')), 'Not an absolute URL'
+                        yield url
+                else:
+                    for potential_attr in ['href', 'src']:
+                        if potential_attr in element.attrs and policy.shouldCrawlUrl(element.attrs[potential_attr]):
+                            url = policy.canonicalize(element.attrs[potential_attr])
+                            assert url.startswith(('http://', 'https://')), 'Not an absolute URL'
+                            yield url
+
 
         if response.error:
             self.errors[url] = response.error.code
@@ -100,9 +109,12 @@ class Crawler:
                 except OSError as exception:
                     if exception.errno != errno.EEXIST:
                         raise exception
-                transformed = self.policy.extractContent(content) if isinstance(content, str) else content
-                with open(path, 'w') as f:
-                    f.write(transformed)
+                if isinstance(content, str):
+                    with open(path, 'w') as f:
+                        f.write(self.policy.extractContent(content))
+                else:
+                    with open(path, 'wb') as f:
+                        f.write(content)
 
     def get_local_path_from_url(self, canonical_url):
         """
@@ -113,7 +125,7 @@ class Crawler:
         assert url_path.startswith('/')
         if url_path.endswith('/'):
             url_path += 'index.html'
-        elif '.' not in url_path.split('/')[0]:  # no extension in the final path component
+        elif '.' not in url_path.split('/')[-1]:  # no extension in the final path component
             url_path += '/index.html'
         return os.path.join(self.policy.getOutDirectory(), url_path[1:])  # drop the leading slash
 
