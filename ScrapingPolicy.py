@@ -6,6 +6,7 @@ class ScrapingPolicy:
         :type rootUrl: str
         """
         self.rootUrl = rootUrl
+        assert self.rootUrl.startswith(('http://', 'https://'))
 
     def shouldCrawlUrl(self, url):
         """
@@ -29,6 +30,14 @@ class ScrapingPolicy:
         :return: Canonical version of the URL in question, such that two pages with different paths don't get scraped twice.
                  Note that the canonical version should be an absolute URL (e.g., http://mysite.com/home/).
         :rtype: str
+
+        >>> policy = ScrapingPolicy('http://foo.bar')
+        >>> policy.canonicalize('http://foo.bar/baz')
+        'http://foo.bar/baz/'
+
+        >>> policy = ScrapingPolicy('http://foo.bar')
+        >>> policy.canonicalize('http://foo.bar/baz/index.html')
+        'http://foo.bar/baz/'
         """
         abs_url = self.rootUrl + url if url.startswith('/') else url
         components = abs_url.split('/')
@@ -56,4 +65,8 @@ class ScrapingPolicy:
         """
         return "out"
 
+
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
 
