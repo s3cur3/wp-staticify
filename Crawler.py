@@ -69,7 +69,10 @@ class Crawler:
 
 
         if response.error:
-            self.errors[url] = response.error.code
+            try:
+                self.errors[url] = response.error.code
+            except:
+                self.errors[url] = str(response.error)
         else:
             if self.response_is_text(response):
                 content = response.body.decode('utf-8')
