@@ -15,6 +15,7 @@ class Crawler:
         self.policy = policy
         self.requests_in_flight = 0
         self.crawled = set()
+        self.backlog = set()
         self.redirects = {}  # maps URLs to their destination
         self.errors = {}  # maps URLs to their (error) HTTP status codes
         AsyncHTTPClient.configure(None, defaults=dict(user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'))
@@ -54,18 +55,14 @@ class Crawler:
             soup = BeautifulSoup(html, 'lxml')
             for element in soup.find_all():
                 if 'srcset' in element.attrs:
-                    # add all sources
                     for source in element.attrs['srcset'].split(','):
                         src = source.rsplit(' ', 1)[:-1]
-                        url = policy.canonicalize(src)
-                        assert url.startswith(('http://', 'https://')), 'Not an absolute URL'
-                        yield url
+                        if policy.shouldCrawlUrl(src):
+                            yield policy.canonicalize(src)
                 else:
                     for potential_attr in ['href', 'src']:
                         if potential_attr in element.attrs and policy.shouldCrawlUrl(element.attrs[potential_attr]):
-                            url = policy.canonicalize(element.attrs[potential_attr])
-                            assert url.startswith(('http://', 'https://')), 'Not an absolute URL'
-                            yield url
+                            yield policy.canonicalize(element.attrs[potential_attr])
 
 
         if response.error:
@@ -83,8 +80,8 @@ class Crawler:
             self.scrape(url, response.effective_url, content)
 
         self.requests_in_flight -= 1
-        if self.requests_in_flight == 0:
-            ioloop.IOLoop.instance().stop()
+
+        self.run_backlog()
 
     @staticmethod
     def response_is_text(response):
@@ -102,10 +99,22 @@ class Crawler:
         """
         for url in urls:
             if url not in self.crawled:
-                self.crawled.add(url)
-                self.requests_in_flight += 1
-                self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
+                if self.requests_in_flight < self.policy.max_concurrent_requests:
+                    self._enqueue_internal(url)
+                else:
+                    self.backlog.add(url)
 
+    def _enqueue_internal(self, url):
+        self.crawled.add(url)
+        self.requests_in_flight += 1
+        self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
+
+    def run_backlog(self):
+        while self.backlog and self.requests_in_flight < self.policy.max_concurrent_requests:
+            self._enqueue_internal(self.backlog.pop())
+
+        if not self.backlog and self.requests_in_flight == 0:
+            ioloop.IOLoop.instance().stop()  # all done!!
 
     def scrape(self, initial_url, final_url, content):
         """
