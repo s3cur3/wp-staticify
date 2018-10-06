@@ -18,7 +18,7 @@ class Crawler:
         self.redirects = {}  # maps URLs to their destination
         self.errors = {}  # maps URLs to their (error) HTTP status codes
         AsyncHTTPClient.configure(None, defaults=dict(user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'))
-        self.http_client = AsyncHTTPClient()
+        self.http_client = AsyncHTTPClient(max_clients=policy.max_concurrent_requests)
 
     def crawl(self):
         """

@@ -11,6 +11,10 @@ class ScrapingPolicy:
         self.domain = f"{uri.scheme}://{uri.netloc}"
         assert self.domain.startswith(('http://', 'https://'))
 
+    @property
+    def max_concurrent_requests(self):
+        return 20
+
     def shouldCrawlUrl(self, url):
         """
         :type url: str
