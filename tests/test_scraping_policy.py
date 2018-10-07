@@ -9,3 +9,6 @@ def test_canonicalize():
     for pair in combinations(['/foo', '/foo/', '/foo/index.html', f"{root}/foo", f"{root}/foo/", f"{root}/foo/index.html"], 2):
         assert policy.canonicalize(pair[0]) == policy.canonicalize(pair[1])
     assert f"{root}/foo/bar.jpg" == policy.canonicalize('/foo/bar.jpg')
+
+def test_outdir():
+    assert policy.out_directory == 'gateway.x-plane.com'

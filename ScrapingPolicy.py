@@ -7,13 +7,16 @@ class ScrapingPolicy:
         :type start_at_url: str
         """
         self.start_at_url = start_at_url
-        uri = urlparse(start_at_url)
-        self.domain = f"{uri.scheme}://{uri.netloc}"
-        assert self.domain.startswith(('http://', 'https://'))
+        self.uri = urlparse(start_at_url)
+        assert self.uri.scheme in ('http', 'https')
 
     @property
     def max_concurrent_requests(self):
         return 20
+
+    @property
+    def domain(self):
+        return f"{self.uri.scheme}://{self.uri.netloc}"
 
     def shouldCrawlUrl(self, url):
         """
@@ -21,7 +24,7 @@ class ScrapingPolicy:
         :rtype: bool
         :return: true iff this URL should be crawled
         """
-        return self.domain in url or url.startswith('/')
+        return (self.domain in url or url.startswith('/')) and '/scenery/page/' not in url
 
     def shouldScrapeUrl(self, url):
         """
@@ -65,12 +68,17 @@ class ScrapingPolicy:
         """
         return content
 
-    def getOutDirectory(self):
+    @property
+    def out_directory(self):
         """
         :return: The directory into which we should write all the scraped content
         :rtype: str
+
+        >>> policy = ScrapingPolicy('http://foo.bar')
+        >>> policy.out_directory
+        'foo.bar'
         """
-        return "out"
+        return self.uri.netloc
 
 
 if __name__ == "__main__":

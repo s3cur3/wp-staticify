@@ -29,10 +29,10 @@ class Crawler:
         ioloop.IOLoop.instance().start()
 
         # Only after IOLoop.instance().stop() has been called...
-        with open(os.path.join(self.policy.getOutDirectory(), 'errors.log'), 'w') as error_file:
+        with open(os.path.join(self.policy.out_directory, 'errors.log'), 'w') as error_file:
             error_file.writelines(f"HTTP Status {status_code}: {url}\n" for url, status_code in self.errors.items())
 
-        with open(os.path.join(self.policy.getOutDirectory(), 'redirects.conf'), 'w') as redirects_file:
+        with open(os.path.join(self.policy.out_directory, 'redirects.conf'), 'w') as redirects_file:
             for original, destination in self.redirects.items():
                 parsed = urlparse(original)
                 if parsed.query:
@@ -155,6 +155,6 @@ class Crawler:
             url_path += 'index.html'
         elif '.' not in url_path.split('/')[-1]:  # no extension in the final path component
             url_path += '/index.html'
-        return os.path.join(self.policy.getOutDirectory(), url_path[1:])  # drop the leading slash
+        return os.path.join(self.policy.out_directory, url_path[1:])  # drop the leading slash
 
 
