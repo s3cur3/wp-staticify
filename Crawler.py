@@ -98,16 +98,16 @@ class Crawler:
         :type urls: Iterable[str]
         """
         for url in urls:
-            if url not in self.crawled:
-                if self.requests_in_flight < self.policy.max_concurrent_requests:
-                    self._enqueue_internal(url)
-                else:
-                    self.backlog.add(url)
+            if self.requests_in_flight < self.policy.max_concurrent_requests:
+                self._enqueue_internal(url)
+            else:
+                self.backlog.add(url)
 
     def _enqueue_internal(self, url):
-        self.crawled.add(url)
-        self.requests_in_flight += 1
-        self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
+        if url not in self.crawled:
+            self.crawled.add(url)
+            self.requests_in_flight += 1
+            self.http_client.fetch(url.strip(), partial(self.handle_response, url), raise_error=False)
 
     def run_backlog(self):
         while self.backlog and self.requests_in_flight < self.policy.max_concurrent_requests:
